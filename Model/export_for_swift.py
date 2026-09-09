@@ -1,17 +1,4 @@
-"""
-Export the fitted DVC risk model to files a Swift app can read.
 
-Produces  model_export/
-    manifest.json          - decode params, the two temporal profiles, band cutoffs,
-                             and one entry per state (grid file + geographic bbox)
-    grid_<State>.bin        - rows*cols bytes, uint8, row-major, ROW 0 = NORTH edge.
-                             byte b  ->  relative = b/255
-                                         log10(intensity+eps) = log_lo + relative*(log_hi-log_lo)
-                                         intensity = 10**that - eps
-
-The Swift side loads these once and computes
-    risk = intensity(lat,lon) * season_profile[doy] * diurnal_profile[hoursAfterSunset]
-"""
 import json
 import time
 from pathlib import Path
