@@ -1,23 +1,4 @@
-"""
-Spatiotemporal KDE risk model for deer-vehicle collisions (DVC).
 
-risk(lat, lon, doy, hour) = spatial_intensity(lat, lon)
-                          * season_factor(doy)          # day-of-year, wrap-around
-                          * diurnal_factor(hour - sunset)  # hours relative to sunset, wrap-around
-
-- spatial_intensity : Gaussian kernel density over historical collision points,
-                      evaluated in a local equirectangular (km) projection.
-- season_factor     : circular KDE over day-of-year, normalised to mean 1.0.
-- diurnal_factor    : circular KDE over (clock hour - sunset hour), normalised to mean 1.0.
-
-The temporal factors are multiplicative "how many times average" numbers, so a
-score of, e.g., spatial=X with season=2.1 and diurnal=3.4 means "~7x the baseline
-rate for this spot right now".
-
-Real-time use: call `score(...)` with day-of-year, local decimal hour, and the
-local decimal hour of sunset. `solar_sunset_decimal()` gives an approximate sunset
-if you don't have one; swap in `astral` for production accuracy.
-"""
 from __future__ import annotations
 
 import numpy as np
