@@ -1,6 +1,40 @@
 import SwiftUI
 import MapKit
 
+// MARK: - Simulation vehicle annotation
+
+/// Marker for the sped-up trip playback driven by `AppModel+Simulation.swift`.
+/// `coordinate` is `@objc dynamic` so mutating it in place (rather than
+/// remove/re-add) lets MapKit animate the marker smoothly between ticks.
+final class SimulationVehicleAnnotation: NSObject, MKAnnotation {
+    @objc dynamic var coordinate: CLLocationCoordinate2D
+    var heading: CLLocationDirection
+    var band: DVCRiskBand
+
+    init(coordinate: CLLocationCoordinate2D, heading: CLLocationDirection, band: DVCRiskBand) {
+        self.coordinate = coordinate
+        self.heading = heading
+        self.band = band
+        super.init()
+    }
+}
+
+private func makeSimulationAnnotationView(for annotation: SimulationVehicleAnnotation,
+                                           mapView: MKMapView) -> MKAnnotationView {
+    let reuseID = "simulationVehicle"
+    let view = mapView.dequeueReusableAnnotationView(withIdentifier: reuseID)
+               ?? MKAnnotationView(annotation: annotation, reuseIdentifier: reuseID)
+    view.annotation = annotation
+    let symbolConfig = UIImage.SymbolConfiguration(pointSize: 22, weight: .bold)
+    view.image = UIImage(systemName: "location.north.fill", withConfiguration: symbolConfig)?
+        .withRenderingMode(.alwaysTemplate)
+    view.tintColor = RiskPalette.uiColor(for: annotation.band)
+    view.transform = CGAffineTransform(rotationAngle: annotation.heading * .pi / 180)
+    view.centerOffset = .zero
+    view.canShowCallout = false
+    return view
+}
+
 struct RiskMapView: UIViewRepresentable {
     @Environment(AppModel.self) private var app
 
@@ -28,11 +62,13 @@ struct RiskMapView: UIViewRepresentable {
         private var drawnRouteID: ObjectIdentifier?
         private var lastZoomIn = 0
         private var lastZoomOut = 0
+        private var simulationAnnotation: SimulationVehicleAnnotation?
 
         func sync(_ mv: MKMapView, app: AppModel) {
             syncHeatmap(mv, app: app)
             syncRoute(mv, app: app)
             syncZoom(mv, app: app)
+            syncSimulation(mv, app: app)
         }
 
         private func syncZoom(_ mv: MKMapView, app: AppModel) {
@@ -108,6 +144,46 @@ struct RiskMapView: UIViewRepresentable {
             }
         }
 
+        // MARK: Simulation marker
+
+        /// Diffs against `simulationAnnotation` rather than removing/re-adding
+        /// every tick (~30fps) — mutating the existing annotation's coordinate
+        /// lets MapKit animate it in place, matching the pattern used by
+        /// `syncHeatmap`/`syncRoute` above.
+        private func syncSimulation(_ mv: MKMapView, app: AppModel) {
+            guard app.isSimulating, let coord = app.simulatedCoordinate else {
+                if let existing = simulationAnnotation {
+                    mv.removeAnnotation(existing)
+                    simulationAnnotation = nil
+                }
+                return
+            }
+
+            let band = currentSimulationBand(app)
+            if let existing = simulationAnnotation {
+                existing.coordinate = coord
+                existing.heading = app.simulatedHeading
+                existing.band = band
+                if let view = mv.view(for: existing) {
+                    view.transform = CGAffineTransform(rotationAngle: existing.heading * .pi / 180)
+                    view.tintColor = RiskPalette.uiColor(for: existing.band)
+                }
+            } else {
+                let annotation = SimulationVehicleAnnotation(coordinate: coord,
+                                                              heading: app.simulatedHeading,
+                                                              band: band)
+                simulationAnnotation = annotation
+                mv.addAnnotation(annotation)
+            }
+        }
+
+        private func currentSimulationBand(_ app: AppModel) -> DVCRiskBand {
+            guard !app.routeScored.isEmpty else { return .low }
+            let i = min(app.routeScored.count - 1,
+                        Int(app.simulationProgress * Double(app.routeScored.count - 1)))
+            return app.routeScored[i].band
+        }
+
         // MARK: Delegate — overlays
 
         func mapView(_ mv: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -130,8 +206,13 @@ struct RiskMapView: UIViewRepresentable {
         // MARK: Delegate — annotations
 
         func mapView(_ mv: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard let hotspot = annotation as? HotspotAnnotation else { return nil }
-            return makeHotspotAnnotationView(for: hotspot, mapView: mv)
+            if let hotspot = annotation as? HotspotAnnotation {
+                return makeHotspotAnnotationView(for: hotspot, mapView: mv)
+            }
+            if let vehicle = annotation as? SimulationVehicleAnnotation {
+                return makeSimulationAnnotationView(for: vehicle, mapView: mv)
+            }
+            return nil
         }
     }
 }

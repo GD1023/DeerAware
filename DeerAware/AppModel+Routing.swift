@@ -21,6 +21,7 @@ extension AppModel {
         }
         route = mkRoute
         rescoreRoute()
+        recomputeDepartureOptions()
     }
 
     func rescoreRoute() {
@@ -38,5 +39,7 @@ extension AppModel {
         routeScored = []
         hotspots = []
         routeError = nil
+        resetDepartureOptions()
+        stopSimulation()
     }
 }

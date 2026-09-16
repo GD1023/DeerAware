@@ -24,12 +24,16 @@ struct MapScreen: View {
 
                     // Route from/to card
                     RouteControls()
+
+                    // Direction-aware simulation alert
+                    SimulationAlertBanner()
                 }
                 .safeAreaPadding(.top)
 
                 // ── 3. Legend + zoom — bottom-right ───────────────────
                 VStack(alignment: .trailing, spacing: 10) {
                     Spacer()
+                    SimulationControls()
                     LegendView(
                         isVisible: $showLegend,
                         heatmapStyle: Binding(

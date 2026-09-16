@@ -2,6 +2,8 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(AppModel.self) private var appModel
+    // On-device voice assistant (DeerAware/Voice/) - presented as a sheet from the floating mic button below.
+    @State private var showVoiceAssistant = false
 
     var body: some View {
         NavigationStack {
@@ -17,7 +19,30 @@ struct HomeView: View {
             }
             .navigationTitle("DeerAware")
             .navigationBarTitleDisplayMode(.large)
+            .overlay(alignment: .bottomTrailing) {
+                voiceAssistantButton
+            }
         }
+        .sheet(isPresented: $showVoiceAssistant) {
+            VoiceAssistantView()
+        }
+    }
+
+    private var voiceAssistantButton: some View {
+        Button {
+            showVoiceAssistant = true
+        } label: {
+            Image(systemName: "mic.fill")
+                .font(.title2)
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color.accentColor)
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 20)
+        .accessibilityLabel("Voice assistant")
     }
 
     // MARK: Sections

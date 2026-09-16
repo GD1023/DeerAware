@@ -41,12 +41,16 @@ struct RouteControls: View {
                 }
             }
 
+            routeSummaryRow
             if app.route != nil { departurePicker }
+            bestTimeToLeaveBanner
             if let err = app.routeError { errorLabel(err) }
         }
         .animation(.easeInOut(duration: 0.18), value: fromResults.count)
         .animation(.easeInOut(duration: 0.18), value: toResults.count)
         .animation(.easeInOut(duration: 0.18), value: app.route != nil)
+        .animation(.easeInOut(duration: 0.18), value: app.departureOptions.count)
+        .animation(.easeInOut(duration: 0.18), value: app.isComputingDepartureOptions)
     }
 
     // MARK: - Search card
@@ -261,6 +265,169 @@ struct RouteControls: View {
         }
         .padding(.bottom, 8)
         .animation(.easeInOut(duration: 0.18), value: showCustom)
+    }
+
+    // MARK: - Route summary (Google-Maps-style card)
+
+    @ViewBuilder
+    private var routeSummaryRow: some View {
+        if let route = app.route {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Self.durationFormatter.string(from: route.expectedTravelTime) ?? "")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text("\(formattedDistance(route.distance)) \u{2022} Arrive \(formattedArrival(route))")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                    Spacer()
+                }
+
+                if !app.routeScored.isEmpty {
+                    riskBreakdown
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.58))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .shadow(color: .black.opacity(0.3), radius: 10, y: 3)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        }
+    }
+
+    /// Count of scored route points per band, colour-coded via `RiskPalette`.
+    private var riskBreakdown: some View {
+        HStack(spacing: 14) {
+            ForEach(DVCRiskBand.allCases, id: \.rawValue) { band in
+                let count = app.routeScored.filter { $0.band == band }.count
+                if count > 0 {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(RiskPalette.color(for: band))
+                            .frame(width: 8, height: 8)
+                        Text("\(count)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private static let durationFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .abbreviated
+        f.allowedUnits = [.hour, .minute]
+        f.maximumUnitCount = 2
+        return f
+    }()
+
+    private func formattedDistance(_ meters: CLLocationDistance) -> String {
+        String(format: "%.1f mi", meters / 1609.34)
+    }
+
+    private func formattedArrival(_ route: MKRoute) -> String {
+        Date().addingTimeInterval(app.departureOffset + route.expectedTravelTime)
+            .formatted(date: .omitted, time: .shortened)
+    }
+
+    // MARK: - Best time to leave
+
+    @ViewBuilder
+    private var bestTimeToLeaveBanner: some View {
+        if app.route != nil {
+            if app.isComputingDepartureOptions {
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.7).tint(.white.opacity(0.6))
+                    Text("Checking upcoming risk\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            } else if let recommended = recommendedOption, let current = currentOption {
+                bestTimeBannerContent(recommended: recommended, current: current)
+            }
+        }
+    }
+
+    /// The sampled option matching (or nearest to) `app.departureOffset` - "if I leave as currently selected".
+    private var currentOption: DepartureOption? {
+        app.departureOptions.min { abs($0.offset - app.departureOffset) < abs($1.offset - app.departureOffset) }
+    }
+
+    private var recommendedOption: DepartureOption? {
+        guard let offset = app.recommendedDepartureOffset else { return nil }
+        return app.departureOptions.first { $0.offset == offset }
+    }
+
+    @ViewBuilder
+    private func bestTimeBannerContent(recommended: DepartureOption, current: DepartureOption) -> some View {
+        let currentBad = current.severeCount + current.highCount
+        let recommendedBad = recommended.severeCount + recommended.highCount
+        let isBetter = recommended.overallBand.rawValue < current.overallBand.rawValue || recommendedBad < currentBad
+        let accent = isBetter ? RiskPalette.color(for: current.overallBand) : RiskPalette.color(for: .low)
+
+        let content = HStack(alignment: .top, spacing: 10) {
+            Image(systemName: isBetter ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(accent)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                if isBetter {
+                    Text("Leaving now passes through \(current.overallBand.label)-risk stretches.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text(recommended.isNow
+                         ? "Leaving right away lowers that to \(recommended.overallBand.label)."
+                         : "Waiting until \(timeString(recommended.date)) (+\(offsetLabel(recommended.offset))) lowers that to \(recommended.overallBand.label).")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.75))
+                } else {
+                    Text("Now is a good time to leave \u{2014} risk is \(current.overallBand.label) along this route.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(accent.opacity(0.16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(accent.opacity(0.5), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+
+        if isBetter {
+            Button {
+                app.departureOffset = recommended.offset
+                app.rescoreRoute()
+            } label: { content }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        } else {
+            content
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+        }
+    }
+
+    private func timeString(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func offsetLabel(_ offset: TimeInterval) -> String {
+        let hours = offset / 3600
+        if hours == hours.rounded() { return "\(Int(hours))h" }
+        return String(format: "%.1fh", hours)
     }
 
     private func errorLabel(_ msg: String) -> some View {
