@@ -14,6 +14,7 @@
 
 import Foundation
 import CoreLocation
+import MapKit
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -171,15 +172,15 @@ extension DeerAwareContext {
 /// through the lock.
 final class DeerAwareContextStore: @unchecked Sendable {
     private let lock = NSLock()
-    private var _context = DeerAwareContext.empty
-    private var _engine: DVCRiskModel?
+    nonisolated(unsafe) private var _context = DeerAwareContext.empty
+    nonisolated(unsafe) private var _engine: DVCRiskModel?
 
-    var context: DeerAwareContext {
+    nonisolated var context: DeerAwareContext {
         get { lock.lock(); defer { lock.unlock() }; return _context }
         set { lock.lock(); _context = newValue; lock.unlock() }
     }
 
-    var engine: DVCRiskModel? {
+    nonisolated var engine: DVCRiskModel? {
         get { lock.lock(); defer { lock.unlock() }; return _engine }
         set { lock.lock(); _engine = newValue; lock.unlock() }
     }
@@ -278,25 +279,25 @@ struct CurrentRiskTool: Tool {
 
     let store: DeerAwareContextStore
 
-    func call(arguments: Arguments) async throws -> ToolOutput {
+    func call(arguments: Arguments) async throws -> String {
         guard let engine = store.engine else {
-            return ToolOutput("The risk model isn't loaded yet.")
+            return "The risk model isn't loaded yet."
         }
         let coordinate: CLLocationCoordinate2D
         do {
             coordinate = try await OneShotLocationFetcher.shared.currentLocation()
         } catch {
-            return ToolOutput("I couldn't get your current location, so I can't check risk there right now.")
+            return "I couldn't get your current location, so I can't check risk there right now."
         }
 
-        let components = engine.risk(at: coordinate, date: .now)
+        let components = engine.risk(at: coordinate, date: Date())
         guard components.covered else {
-            return ToolOutput("You're currently outside DeerAware's nine covered states, so there's no fine-grained spatial data here - only general season and time-of-day factors apply.")
+            return "You're currently outside DeerAware's nine covered states, so there's no fine-grained spatial data here - only general season and time-of-day factors apply."
         }
         let band = engine.band(for: components)
         let season = String(format: "%.1f", components.seasonFactor)
         let dusk = String(format: "%.1f", components.diurnalFactor)
-        return ToolOutput("Current risk band here: \(band.label). Season multiplier \u{d7}\(season), dusk multiplier \u{d7}\(dusk).")
+        return "Current risk band here: \(band.label). Season multiplier \u{d7}\(season), dusk multiplier \u{d7}\(dusk)."
     }
 }
 
@@ -314,8 +315,8 @@ struct RouteSummaryTool: Tool {
 
     let store: DeerAwareContextStore
 
-    func call(arguments: Arguments) async throws -> ToolOutput {
-        ToolOutput(store.context.fullRouteBriefing)
+    func call(arguments: Arguments) async throws -> String {
+        store.context.fullRouteBriefing
     }
 }
 

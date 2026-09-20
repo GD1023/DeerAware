@@ -1,5 +1,41 @@
 import MapKit
 
+// MARK: - Route endpoint annotations (Start / End pins)
+
+final class RouteEndpointAnnotation: NSObject, MKAnnotation {
+    enum Kind { case start, end }
+    let coordinate: CLLocationCoordinate2D
+    let title: String?
+    let kind: Kind
+
+    init(coordinate: CLLocationCoordinate2D, kind: Kind) {
+        self.coordinate = coordinate
+        self.kind = kind
+        self.title = kind == .start ? "Start" : "End"
+        super.init()
+    }
+}
+
+func makeRouteEndpointAnnotationView(for annotation: RouteEndpointAnnotation,
+                                      mapView: MKMapView) -> MKMarkerAnnotationView {
+    let reuseID = "routeEndpoint"
+    let view = (mapView.dequeueReusableAnnotationView(withIdentifier: reuseID)
+                as? MKMarkerAnnotationView)
+               ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: reuseID)
+
+    view.annotation = annotation
+    switch annotation.kind {
+    case .start:
+        view.markerTintColor = .systemGreen
+        view.glyphImage = UIImage(systemName: "figure.walk")
+    case .end:
+        view.markerTintColor = .systemRed
+        view.glyphImage = UIImage(systemName: "flag.checkered")
+    }
+    view.canShowCallout = true
+    return view
+}
+
 // MARK: - Annotation model
 
 final class HotspotAnnotation: NSObject, MKAnnotation {

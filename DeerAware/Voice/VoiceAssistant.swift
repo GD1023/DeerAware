@@ -97,6 +97,7 @@ final class VoiceAssistant: NSObject {
     private let audioEngine = AVAudioEngine()
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var silenceTimer: Task<Void, Never>?
 
     // MARK: Speech synthesis
     private let synthesizer = AVSpeechSynthesizer()
@@ -154,13 +155,12 @@ final class VoiceAssistant: NSObject {
     }
 
     private func requestMicrophoneAuthorization() async -> Bool {
-        let session = AVAudioSession.sharedInstance()
-        switch session.recordPermission {
+        switch AVAudioApplication.shared.recordPermission {
         case .granted: return true
         case .denied: return false
         case .undetermined:
             return await withCheckedContinuation { cont in
-                session.requestRecordPermission { granted in
+                AVAudioApplication.requestRecordPermission { granted in
                     cont.resume(returning: granted)
                 }
             }
@@ -223,7 +223,17 @@ final class VoiceAssistant: NSObject {
                 if let result {
                     self.liveTranscript = result.bestTranscription.formattedString
                     if result.isFinal {
+                        self.silenceTimer?.cancel()
+                        self.silenceTimer = nil
                         self.finishListening(transcript: result.bestTranscription.formattedString)
+                    } else {
+                        // Auto-submit after 3 seconds of silence
+                        self.silenceTimer?.cancel()
+                        self.silenceTimer = Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: 3_000_000_000)
+                            guard let self, self.state == .listening else { return }
+                            self.stopListening()
+                        }
                     }
                 } else if error != nil {
                     // Recognition errors (including routine "no speech detected") end the
@@ -251,6 +261,8 @@ final class VoiceAssistant: NSObject {
     }
 
     private func stopAudioEngine() {
+        silenceTimer?.cancel()
+        silenceTimer = nil
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionTask?.cancel()
@@ -269,6 +281,8 @@ final class VoiceAssistant: NSObject {
     /// Stops listening/speaking and resets to idle - used by the mic button
     /// (tap again to cancel) and when the assistant sheet is dismissed.
     func cancel() {
+        silenceTimer?.cancel()
+        silenceTimer = nil
         stopAudioEngine()
         stopSpeaking()
         state = .idle
@@ -315,7 +329,7 @@ final class VoiceAssistant: NSObject {
         // `Instructions` conforms to ExpressibleByStringInterpolation, so a
         // plain string literal is the most stable way to construct one -
         // avoids depending on the exact shape of its result-builder API.
-        let instructions: Instructions = """
+        let instructions = """
             You are the DeerAware voice assistant, embedded in an iOS app that estimates \
             deer-vehicle collision (DVC) risk from historical collision data, season, and \
             time of day, for nine US states: Connecticut, Georgia, Iowa, Kansas, Maryland, \
@@ -374,6 +388,8 @@ final class VoiceAssistant: NSObject {
 
     private func speak(_ text: String) {
         guard !text.isEmpty else { state = .idle; return }
+        // Don't override an active listening session (user interrupted)
+        guard state != .listening else { return }
         state = .speaking
         do {
             try configureAudioSession()
@@ -400,7 +416,7 @@ final class VoiceAssistant: NSObject {
 
     private func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.duckOthers, .allowBluetooth, .defaultToSpeaker])
+        try session.setCategory(.playAndRecord, mode: .default, options: [.duckOthers, .allowBluetoothA2DP, .defaultToSpeaker])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
 }

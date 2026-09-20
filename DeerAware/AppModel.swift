@@ -49,6 +49,10 @@ final class AppModel {
     var simulatedHeading: CLLocationDirection = 0
     var activeSimulationAlert: DVCRoutePointRisk?
 
+    // Navigation started: hides the search island, shows only the route
+    var isNavigating: Bool = false
+
+
     // Phase 6: Map display
     var heatmapStyle: HeatmapStyle = .smooth
 

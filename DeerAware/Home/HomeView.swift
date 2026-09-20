@@ -1,9 +1,7 @@
 import SwiftUI
 
-struct HomeView: View {
-    @Environment(AppModel.self) private var appModel
-    // On-device voice assistant (DeerAware/Voice/) - presented as a sheet from the floating mic button below.
-    @State private var showVoiceAssistant = false
+struct HelpView: View {
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -11,51 +9,21 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     howItWorksSection
                     coverageCard
-                    CurrentConditionsCard()
                     disclaimerCard
-                    openMapButton
                 }
                 .padding(.bottom)
             }
             .navigationTitle("DeerAware")
             .navigationBarTitleDisplayMode(.large)
-            .overlay(alignment: .bottomTrailing) {
-                voiceAssistantButton
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
             }
         }
-        .sheet(isPresented: $showVoiceAssistant) {
-            VoiceAssistantView()
-        }
-    }
-
-    private var voiceAssistantButton: some View {
-        Button {
-            showVoiceAssistant = true
-        } label: {
-            Image(systemName: "mic.fill")
-                .font(.title2)
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Color.accentColor)
-                .clipShape(Circle())
-                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-        }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
-        .accessibilityLabel("Voice assistant")
     }
 
     // MARK: Sections
-
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("DeerAware")
-                .font(.largeTitle).fontWeight(.bold)
-            Text("Where deer-vehicle collisions cluster, and when the risk peaks — for 9 US states.")
-                .font(.subheadline).foregroundStyle(.secondary)
-        }
-        .padding()
-    }
 
     private var howItWorksSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -95,20 +63,6 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
-    }
-
-    private var openMapButton: some View {
-        Button {
-            appModel.selectedTab = 1
-        } label: {
-            Label("Open the map", systemImage: "map")
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.accentColor)
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
         .padding(.horizontal)
     }
 }

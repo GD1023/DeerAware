@@ -60,15 +60,104 @@ struct RiskMapView: UIViewRepresentable {
         private var shownStyle: HeatmapStyle = .smooth
         private var imageCache: [String: [HeatmapStyle: CGImage]] = [:]
         private var drawnRouteID: ObjectIdentifier?
+        private var startAnnotation: RouteEndpointAnnotation?
+        private var endAnnotation: RouteEndpointAnnotation?
         private var lastZoomIn = 0
         private var lastZoomOut = 0
         private var simulationAnnotation: SimulationVehicleAnnotation?
+        private var shownRouteActive: Bool = false
+        private var lastIsNavigating = false
+        private var lastIsSimulating = false
+        private var lastHadRoute = false
+        private var fixedHeading: CLLocationDirection = 0
+        weak var appModel: AppModel?
 
         func sync(_ mv: MKMapView, app: AppModel) {
+            appModel = app
             syncHeatmap(mv, app: app)
             syncRoute(mv, app: app)
             syncZoom(mv, app: app)
             syncSimulation(mv, app: app)
+            syncCamera(mv, app: app)
+        }
+
+        // MARK: Camera
+
+        private func syncCamera(_ mv: MKMapView, app: AppModel) {
+            // Orient map when navigation starts: start at bottom, end at top
+            if app.isNavigating && !lastIsNavigating {
+                lastIsNavigating = true
+                orientForNavigation(mv, app: app)
+            } else if !app.isNavigating {
+                lastIsNavigating = false
+            }
+
+            // Lock heading to start→end bearing when simulation begins
+            if app.isSimulating && !lastIsSimulating {
+                fixedHeading = routeHeading(app: app)
+            }
+
+            // Follow the simulation arrow while simulating — heading stays fixed
+            if app.isSimulating, let coord = app.simulatedCoordinate {
+                let camera = MKMapCamera(lookingAtCenter: coord,
+                                         fromDistance: 250000,
+                                         pitch: 0,
+                                         heading: fixedHeading)
+                mv.setCamera(camera, animated: false)
+            }
+
+            // When simulation stops, restore the full route view
+            if !app.isSimulating && lastIsSimulating, let route = app.route {
+                mv.setVisibleMapRect(route.polyline.boundingMapRect,
+                                     edgePadding: UIEdgeInsets(top: 60, left: 20, bottom: 120, right: 20),
+                                     animated: true)
+            }
+            lastIsSimulating = app.isSimulating
+
+            // When route is cleared (Exit tapped), zoom out to state region
+            let hasRoute = app.route != nil
+            if !hasRoute && lastHadRoute,
+               let info = app.engine.gridInfo(for: app.selectedStateName) {
+                mv.setRegion(info.region, animated: true)
+            }
+            lastHadRoute = hasRoute
+        }
+
+        private func orientForNavigation(_ mv: MKMapView, app: AppModel) {
+            guard let route = app.route else { return }
+            var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid,
+                                                  count: route.polyline.pointCount)
+            route.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: coords.count))
+            guard let first = coords.first, let last = coords.last else { return }
+
+            // Bearing from start → end so the route runs bottom→top on screen
+            let heading = routeBearing(from: first, to: last)
+            fixedHeading = heading
+
+            // Zoom in on the start position, headed in direction of travel
+            let camera = MKMapCamera(lookingAtCenter: first,
+                                      fromDistance: 8000,
+                                      pitch: 0,
+                                      heading: heading)
+            mv.setCamera(camera, animated: true)
+        }
+
+        private func routeHeading(app: AppModel) -> CLLocationDirection {
+            guard let route = app.route, route.polyline.pointCount >= 2 else { return fixedHeading }
+            var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid,
+                                                  count: route.polyline.pointCount)
+            route.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: coords.count))
+            return routeBearing(from: coords.first!, to: coords.last!)
+        }
+
+        private func routeBearing(from a: CLLocationCoordinate2D,
+                                   to b: CLLocationCoordinate2D) -> CLLocationDirection {
+            let lat1 = a.latitude * .pi / 180
+            let lat2 = b.latitude * .pi / 180
+            let dLon = (b.longitude - a.longitude) * .pi / 180
+            let y = sin(dLon) * cos(lat2)
+            let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+            return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
         }
 
         private func syncZoom(_ mv: MKMapView, app: AppModel) {
@@ -95,10 +184,25 @@ struct RiskMapView: UIViewRepresentable {
         // MARK: Heatmap
 
         private func syncHeatmap(_ mv: MKMapView, app: AppModel) {
+            let routeActive = app.route != nil
+            let routeChanged = shownRouteActive != routeActive
             let stateChanged = shownState != app.selectedStateName
             let styleChanged = shownStyle != app.heatmapStyle
 
-            guard stateChanged || styleChanged,
+            // Hide heatmap while a route is displayed
+            if routeActive {
+                if routeChanged {
+                    mv.removeOverlays(mv.overlays.filter { $0 is HeatmapOverlay })
+                    shownRouteActive = true
+                    shownState = app.selectedStateName
+                    shownStyle = app.heatmapStyle
+                }
+                return
+            }
+
+            shownRouteActive = false
+
+            guard stateChanged || styleChanged || routeChanged,
                   let info = app.engine.gridInfo(for: app.selectedStateName) else { return }
 
             shownState = app.selectedStateName
@@ -121,27 +225,40 @@ struct RiskMapView: UIViewRepresentable {
         // MARK: Route + pins
 
         private func syncRoute(_ mv: MKMapView, app: AppModel) {
-            // Use first hotspot pointer as a cheap version token
-            let newID = app.routeScored.first.map { ObjectIdentifier($0.components as AnyObject) }
+            // Use the MKRoute reference itself as the identity token — stable across ticks
+            let newID = app.route.map { ObjectIdentifier($0) }
 
             guard newID != drawnRouteID else { return }
             drawnRouteID = newID
 
             // Remove old route polylines
             mv.removeOverlays(mv.overlays.filter { $0 is MKPolyline })
-            // Remove old hotspot annotations
+            // Remove old hotspot + endpoint annotations
             mv.removeAnnotations(mv.annotations.filter { $0 is HotspotAnnotation })
+            if let s = startAnnotation { mv.removeAnnotation(s); startAnnotation = nil }
+            if let e = endAnnotation   { mv.removeAnnotation(e); endAnnotation = nil }
 
-            guard !app.routeScored.isEmpty else { return }
+            guard !app.routeScored.isEmpty, let route = app.route else { return }
 
             mv.addOverlays(app.engine.routeOverlays(app.routeScored), level: .aboveRoads)
             mv.addAnnotations(app.hotspots.map { HotspotAnnotation($0) })
 
-            if let route = app.route {
-                mv.setVisibleMapRect(route.polyline.boundingMapRect,
-                                     edgePadding: UIEdgeInsets(top: 60, left: 20, bottom: 120, right: 20),
-                                     animated: true)
+            // Start / end pins
+            var coords = [CLLocationCoordinate2D](
+                repeating: kCLLocationCoordinate2DInvalid,
+                count: route.polyline.pointCount)
+            route.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: coords.count))
+            if let first = coords.first, let last = coords.last {
+                let start = RouteEndpointAnnotation(coordinate: first, kind: .start)
+                let end   = RouteEndpointAnnotation(coordinate: last,  kind: .end)
+                startAnnotation = start
+                endAnnotation   = end
+                mv.addAnnotations([start, end])
             }
+
+            mv.setVisibleMapRect(route.polyline.boundingMapRect,
+                                 edgePadding: UIEdgeInsets(top: 60, left: 20, bottom: 120, right: 20),
+                                 animated: true)
         }
 
         // MARK: Simulation marker
@@ -151,18 +268,26 @@ struct RiskMapView: UIViewRepresentable {
         /// lets MapKit animate it in place, matching the pattern used by
         /// `syncHeatmap`/`syncRoute` above.
         private func syncSimulation(_ mv: MKMapView, app: AppModel) {
-            guard app.isSimulating, let coord = app.simulatedCoordinate else {
+            // Show arrow at start position while navigating (before simulation plays)
+            let showAtStart = app.isNavigating && !app.isSimulating && !app.routeScored.isEmpty
+            guard app.isSimulating || showAtStart, let coord = showAtStart
+                    ? app.routeScored.first?.coordinate
+                    : app.simulatedCoordinate else {
                 if let existing = simulationAnnotation {
                     mv.removeAnnotation(existing)
                     simulationAnnotation = nil
                 }
                 return
             }
+            let heading: CLLocationDirection = showAtStart
+                ? routeBearing(from: app.routeScored[0].coordinate,
+                               to: app.routeScored[min(1, app.routeScored.count - 1)].coordinate)
+                : app.simulatedHeading
 
             let band = currentSimulationBand(app)
             if let existing = simulationAnnotation {
                 existing.coordinate = coord
-                existing.heading = app.simulatedHeading
+                existing.heading = heading
                 existing.band = band
                 if let view = mv.view(for: existing) {
                     view.transform = CGAffineTransform(rotationAngle: existing.heading * .pi / 180)
@@ -170,7 +295,7 @@ struct RiskMapView: UIViewRepresentable {
                 }
             } else {
                 let annotation = SimulationVehicleAnnotation(coordinate: coord,
-                                                              heading: app.simulatedHeading,
+                                                              heading: heading,
                                                               band: band)
                 simulationAnnotation = annotation
                 mv.addAnnotation(annotation)
@@ -206,6 +331,9 @@ struct RiskMapView: UIViewRepresentable {
         // MARK: Delegate — annotations
 
         func mapView(_ mv: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if let endpoint = annotation as? RouteEndpointAnnotation {
+                return makeRouteEndpointAnnotationView(for: endpoint, mapView: mv)
+            }
             if let hotspot = annotation as? HotspotAnnotation {
                 return makeHotspotAnnotationView(for: hotspot, mapView: mv)
             }

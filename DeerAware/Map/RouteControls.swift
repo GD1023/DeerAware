@@ -19,38 +19,142 @@ struct RouteControls: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchCard
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, showSuggestions ? 0 : 8)
+        Group {
+            if app.isNavigating {
+                navigationStrip
+            } else {
+                VStack(spacing: 0) {
+                    searchCard
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .padding(.bottom, showSuggestions ? 0 : 8)
 
-            if focused == .from && !fromResults.isEmpty {
-                suggestionList(fromResults) { item in
-                    fromText = item.name ?? ""
-                    fromCoordinate = item.placemark.location?.coordinate
-                    fromResults = []
-                    focused = .to
+                    if focused == .from && !fromResults.isEmpty {
+                        suggestionList(fromResults) { item in
+                            fromText = item.name ?? ""
+                            fromCoordinate = item.placemark.location?.coordinate
+                            fromResults = []
+                            focused = .to
+                        }
+                    } else if focused == .to && !toResults.isEmpty {
+                        suggestionList(toResults) { item in
+                            toText = item.name ?? ""
+                            toResults = []
+                            focused = nil
+                            Task { await buildRoute(to: item) }
+                        }
+                    }
+
+                    if app.route != nil { departurePicker }
+                    bestTimeToLeaveBanner
+                    routeAndStartRow
+                    if let err = app.routeError { errorLabel(err) }
                 }
-            } else if focused == .to && !toResults.isEmpty {
-                suggestionList(toResults) { item in
-                    toText = item.name ?? ""
-                    toResults = []
-                    focused = nil
-                    Task { await buildRoute(to: item) }
+                .animation(.easeInOut(duration: 0.18), value: fromResults.count)
+                .animation(.easeInOut(duration: 0.18), value: toResults.count)
+                .animation(.easeInOut(duration: 0.18), value: app.route != nil)
+                .animation(.easeInOut(duration: 0.18), value: app.departureOptions.count)
+                .animation(.easeInOut(duration: 0.18), value: app.isComputingDepartureOptions)
+                .onChange(of: app.route == nil) { _, isNil in
+                    if isNil {
+                        toText = ""
+                        fromText = "My Location"
+                        fromCoordinate = nil
+                        fromResults = []
+                        toResults = []
+                    }
                 }
             }
-
-            routeSummaryRow
-            if app.route != nil { departurePicker }
-            bestTimeToLeaveBanner
-            if let err = app.routeError { errorLabel(err) }
         }
-        .animation(.easeInOut(duration: 0.18), value: fromResults.count)
-        .animation(.easeInOut(duration: 0.18), value: toResults.count)
-        .animation(.easeInOut(duration: 0.18), value: app.route != nil)
-        .animation(.easeInOut(duration: 0.18), value: app.departureOptions.count)
-        .animation(.easeInOut(duration: 0.18), value: app.isComputingDepartureOptions)
+    }
+
+    // MARK: - Navigation strip (shown after Start is tapped)
+
+    private var navigationStrip: some View {
+        VStack(spacing: 0) {
+            if let route = app.route {
+                HStack(spacing: 10) {
+                    // Exit button
+                    Button {
+                        app.clearRoute()
+                    } label: {
+                        Text("Exit")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                    }
+
+                    // Condensed route info
+                    Text(Self.durationFormatter.string(from: route.expectedTravelTime) ?? "")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text("·")
+                        .foregroundStyle(.white.opacity(0.4))
+                    Text(formattedDistance(route.distance))
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                    Text("·")
+                        .foregroundStyle(.white.opacity(0.4))
+                    Text("Arrive \(formattedArrival(route))")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+            }
+            bestTimeToLeaveBanner
+        }
+    }
+
+    @ViewBuilder
+    private var routeAndStartRow: some View {
+        if let route = app.route {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.durationFormatter.string(from: route.expectedTravelTime) ?? "")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    HStack(spacing: 4) {
+                        Text(formattedDistance(route.distance))
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.65))
+                        Text("·")
+                            .foregroundStyle(.white.opacity(0.4))
+                        Text("Arrive \(formattedArrival(route))")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                }
+                Spacer()
+                Button { app.isNavigating = true } label: {
+                    Text("Start")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.58))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
+        }
     }
 
     // MARK: - Search card
@@ -267,57 +371,6 @@ struct RouteControls: View {
         .animation(.easeInOut(duration: 0.18), value: showCustom)
     }
 
-    // MARK: - Route summary (Google-Maps-style card)
-
-    @ViewBuilder
-    private var routeSummaryRow: some View {
-        if let route = app.route {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(Self.durationFormatter.string(from: route.expectedTravelTime) ?? "")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.white)
-                        Text("\(formattedDistance(route.distance)) \u{2022} Arrive \(formattedArrival(route))")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.65))
-                    }
-                    Spacer()
-                }
-
-                if !app.routeScored.isEmpty {
-                    riskBreakdown
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color.black.opacity(0.58))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(color: .black.opacity(0.3), radius: 10, y: 3)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-        }
-    }
-
-    /// Count of scored route points per band, colour-coded via `RiskPalette`.
-    private var riskBreakdown: some View {
-        HStack(spacing: 14) {
-            ForEach(DVCRiskBand.allCases, id: \.rawValue) { band in
-                let count = app.routeScored.filter { $0.band == band }.count
-                if count > 0 {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(RiskPalette.color(for: band))
-                            .frame(width: 8, height: 8)
-                        Text("\(count)")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                }
-            }
-            Spacer()
-        }
-    }
 
     private static let durationFormatter: DateComponentsFormatter = {
         let f = DateComponentsFormatter()
@@ -380,16 +433,13 @@ struct RouteControls: View {
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 if isBetter {
-                    Text("Leaving now passes through \(current.overallBand.label)-risk stretches.")
+                    Text(recommended.isNow
+                         ? "The most optimal time to leave is now."
+                         : "The most optimal time to leave is \(timeString(recommended.date)).")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
-                    Text(recommended.isNow
-                         ? "Leaving right away lowers that to \(recommended.overallBand.label)."
-                         : "Waiting until \(timeString(recommended.date)) (+\(offsetLabel(recommended.offset))) lowers that to \(recommended.overallBand.label).")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.75))
                 } else {
-                    Text("Now is a good time to leave \u{2014} risk is \(current.overallBand.label) along this route.")
+                    Text("The most optimal time to leave is now.")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
                 }

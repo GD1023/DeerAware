@@ -86,7 +86,7 @@ public final class DVCRiskModel {
     let grids: [StateGrid]
 
     /// Sensitivity for `band(for:)`. >1 makes the map redder sooner, <1 calmer. Default 1.
-    public var bandSensitivity: Double = 1.0
+    public nonisolated(unsafe) var bandSensitivity: Double = 1.0
 
     // MARK: Loading
 
@@ -143,11 +143,11 @@ public final class DVCRiskModel {
 
     // MARK: Components
 
-    public func seasonFactor(dayOfYear: Int) -> Double {
+    public nonisolated func seasonFactor(dayOfYear: Int) -> Double {
         season[((dayOfYear % 366) + 366) % 366]
     }
 
-    public func diurnalFactor(hoursAfterSunset h: Double) -> Double {
+    public nonisolated func diurnalFactor(hoursAfterSunset h: Double) -> Double {
         let m = (h.truncatingRemainder(dividingBy: 24) + 24).truncatingRemainder(dividingBy: 24)
         let i = min(diurnal.count - 1, max(0, Int(m / 24.0 * Double(diurnal.count))))
         return diurnal[i]
@@ -176,8 +176,8 @@ public final class DVCRiskModel {
 
     // MARK: Scoring
 
-    public func risk(at c: CLLocationCoordinate2D, date: Date,
-                     calendar: Calendar = .current, timeZone: TimeZone = .current) -> DVCRiskComponents {
+    public nonisolated func risk(at c: CLLocationCoordinate2D, date: Date,
+                                calendar: Calendar = .current, timeZone: TimeZone = .current) -> DVCRiskComponents {
         var cal = calendar
         cal.timeZone = timeZone
         let doy = cal.ordinality(of: .day, in: .year, for: date) ?? 1
@@ -204,7 +204,7 @@ public final class DVCRiskModel {
         }
     }
 
-    public func band(for k: DVCRiskComponents) -> DVCRiskBand {
+    public nonisolated func band(for k: DVCRiskComponents) -> DVCRiskBand {
         let effective = k.spatialIntensity * k.seasonFactor * k.diurnalFactor / bandSensitivity
         if effective >= bandP99 { return .severe }
         if effective >= bandP95 { return .high }
@@ -215,10 +215,10 @@ public final class DVCRiskModel {
     /// Score a route. `coordinates` is the ordered polyline (e.g. `MKRoute.polyline` points);
     /// each sample is timestamped by its share of `expectedTravelTime` so dusk/season are
     /// evaluated at the time the driver will actually be there.
-    public func scoreRoute(_ coordinates: [CLLocationCoordinate2D],
-                           departure: Date,
-                           expectedTravelTime: TimeInterval,
-                           samples: Int = 120) -> [DVCRoutePointRisk] {
+    public nonisolated func scoreRoute(_ coordinates: [CLLocationCoordinate2D],
+                                      departure: Date,
+                                      expectedTravelTime: TimeInterval,
+                                      samples: Int = 120) -> [DVCRoutePointRisk] {
         guard coordinates.count >= 2 else {
             return coordinates.map {
                 let k = risk(at: $0, date: departure)
@@ -259,7 +259,7 @@ public final class DVCRiskModel {
 
     // MARK: Spatial internals
 
-    private func grid(containing c: CLLocationCoordinate2D) -> StateGrid? {
+    private nonisolated func grid(containing c: CLLocationCoordinate2D) -> StateGrid? {
         grids.filter {
             c.latitude <= $0.latTop && c.latitude >= $0.latBottom &&
             c.longitude >= $0.lonLeft && c.longitude <= $0.lonRight
@@ -267,7 +267,7 @@ public final class DVCRiskModel {
     }
 
     /// Bilinear sample of the 0...1 relative surface. Row 0 is the north edge.
-    private func sample(_ g: StateGrid, _ c: CLLocationCoordinate2D) -> Double {
+    private nonisolated func sample(_ g: StateGrid, _ c: CLLocationCoordinate2D) -> Double {
         let fy = (g.latTop - c.latitude) / (g.latTop - g.latBottom) * Double(g.rows - 1)
         let fx = (c.longitude - g.lonLeft) / (g.lonRight - g.lonLeft) * Double(g.cols - 1)
         let y0 = min(max(Int(fy.rounded(.down)), 0), g.rows - 1)
@@ -282,7 +282,7 @@ public final class DVCRiskModel {
         return top * (1 - ty) + bot * ty
     }
 
-    private func decode(_ relative: Double) -> Double {
+    private nonisolated func decode(_ relative: Double) -> Double {
         max(0, pow(10.0, logLo + relative * (logHi - logLo)) - eps)
     }
 }

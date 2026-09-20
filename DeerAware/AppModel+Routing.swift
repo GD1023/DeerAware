@@ -30,7 +30,8 @@ extension AppModel {
         routeScored = engine.scoreRoute(
             route.polyline.coordinates(),
             departure: departure,
-            expectedTravelTime: route.expectedTravelTime)
+            expectedTravelTime: route.expectedTravelTime,
+            samples: 600)
         hotspots = engine.hotspots(routeScored, minBand: .high, limit: 3)
     }
 
@@ -39,6 +40,7 @@ extension AppModel {
         routeScored = []
         hotspots = []
         routeError = nil
+        isNavigating = false
         resetDepartureOptions()
         stopSimulation()
     }
